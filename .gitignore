@@ -1,0 +1,22 @@
+# Carpetas de compilación
+build/
+build-win/
+dist-windows/
+zig-cache/
+zig-out/
+.zig-cache/
+
+# Archivos de configuración local y binarios
+config.json
+*.exe
+*.zip
+*.tar.gz
+*.o
+*.obj
+*.moc
+moc_*.cpp
+
+# Archivos del sistema y editores
+.DS_Store
+*.swp
+*~

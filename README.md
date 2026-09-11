@@ -1,9 +1,6 @@
-### Versión corregida y pulida (lista para guardar):
-
-```markdown
 # NativeChats
 
-Overlay de chat unificado para streaming y simracing (Twitch + YouTube Live).
+Overlay de chat unificado para streaming y simracing (Twitch + YouTube Live).  
 100% nativo en C++20 y Qt6, ultraligero y sin intermediarios en la nube.
 
 ---
@@ -57,6 +54,7 @@ cd NativeChats
 mingw64-cmake -B build-win
 cmake --build build-win -j$(nproc)
 ```
+
 El ejecutable generado estará en `build-win/NativeChats.exe`.
 
 ---
@@ -66,23 +64,24 @@ El ejecutable generado estará en `build-win/NativeChats.exe`.
 1. Al abrir la aplicación, presiona **F1** para desplegar el panel de ajustes.
 2. Ingresa tu canal de Twitch y la URL de tu directo de YouTube.
 3. Ajusta los deslizadores de opacidad, velocidad y tamaño de texto a tu gusto.
-4. Presiona **Guardar y Aplicar** (los datos se guardan en `config.json`).
+4. Presiona **Guardar y Aplicar** (los datos se guardan automáticamente en `config.json`).
 5. Para OBS Studio o Streamlabs, añade una **Fuente de Navegador (Browser Source)** apuntando a `http://localhost:8080`.
 
 ---
 
 ## Controles
 
-* **F1:** Abre / Oculta el panel de ajustes.
-* **Arrastrar barra superior:** Mueve la ventana por la pantalla.
-* **Arrastrar bordes / esquinas:** Redimensiona la ventana a cualquier tamaño.
-* **Rueda del ratón hacia arriba:** Pausa el chat para leer mensajes pasados.
-* **Botón "Ir al fondo":** Reanuda el desplazamiento en vivo.
-* **Botón ✕ (o Alt + F4):** Cierra la aplicación limpiamente.
+| Control | Acción |
+| :--- | :--- |
+| **F1** | Abre / Oculta el panel de ajustes. |
+| **Arrastrar barra superior** | Mueve la ventana por la pantalla. |
+| **Arrastrar bordes / esquinas** | Redimensiona la ventana a cualquier tamaño suavemente. |
+| **Rueda del ratón hacia arriba** | Pausa el chat para leer mensajes pasados. |
+| **Botón "Ir al fondo"** | Reanuda el desplazamiento en vivo. |
+| **Botón ✕ (o Alt + F4)** | Cierra la aplicación limpiamente. |
 
 ---
 
 ## Licencia
 
-Este proyecto está bajo la Licencia MIT.
-```
+Este proyecto está bajo la Licencia **MIT**.

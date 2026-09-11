@@ -99,6 +99,3 @@ El ejecutable generado estará en `build-win/NativeChats.exe`.
 ## Licencia
 
 Este proyecto está bajo la Licencia **MIT**.
-```
-
----

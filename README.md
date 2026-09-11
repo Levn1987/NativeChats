@@ -5,6 +5,20 @@ Overlay de chat unificado para streaming y simracing (Twitch + YouTube Live).
 
 ---
 
+## 📥 Descarga Rápida para Windows (Sin compilar nada)
+
+Si solo quieres usar la aplicación en tu PC de streaming o simulador:
+
+1. Ve a la sección de **[Últimas Versiones (Releases)](https://github.com/Levn1987/NativeChats/releases)**.
+2. Descarga el archivo **`NativeChats-Windows.zip`**.
+3. Descomprime la carpeta en tu Escritorio y haz doble clic en **`NativeChats.exe`**.
+
+> ℹ️ **Aviso para Windows 10 / 11:**  
+> Al ser un proyecto de código abierto nuevo sin certificado de pago de Microsoft, Windows Defender SmartScreen podría mostrar una pantalla azul preventiva (*«Windows protegió su PC»*).  
+> Para iniciarla, simplemente haz clic en **«Más información»** y luego en **«Ejecutar de todas formas»**. El ejecutable está verificado y libre de malware.
+
+---
+
 ## Características
 
 * **Twitch IRC Nativo:** Conexión directa por socket TCP con soporte de moderación (CLEARMSG y CLEARCHAT).
@@ -27,11 +41,34 @@ Overlay de chat unificado para streaming y simracing (Twitch + YouTube Live).
 
 ---
 
-## Compilación e Instalación
+## Guía de Uso
+
+1. Al abrir la aplicación, presiona **F1** para desplegar el panel de ajustes.
+2. Ingresa tu canal de Twitch y la URL de tu directo de YouTube.
+3. Ajusta los deslizadores de opacidad, velocidad y tamaño de texto a tu gusto.
+4. Presiona **Guardar y Aplicar** (los datos se guardan automáticamente en `config.json`).
+5. Para OBS Studio o Streamlabs, añade una **Fuente de Navegador (Browser Source)** apuntando a `http://localhost:8080`.
+
+---
+
+## Controles
+
+| Control | Acción |
+| :--- | :--- |
+| **F1** | Abre / Oculta el panel de ajustes. |
+| **Arrastrar barra superior** | Mueve la ventana por la pantalla. |
+| **Arrastrar bordes / esquinas** | Redimensiona la ventana a cualquier tamaño suavemente. |
+| **Rueda del ratón hacia arriba** | Pausa el chat para leer mensajes pasados. |
+| **Botón "Ir al fondo"** | Reanuda el desplazamiento en vivo. |
+| **Botón ✕** (o `Alt + F4`) | Cierra la aplicación limpiamente. |
+
+---
+
+## Compilación para Desarrolladores
 
 ### En Linux (Fedora / RHEL / Ubuntu)
 
-Requisitos: Compilador C++20, CMake (3.16+), Qt6 (Core, Gui, Widgets, Network) y libcurl.
+Requisitos: Compilador C++20, CMake (3.16+), Qt6 (`Core`, `Gui`, `Widgets`, `Network`) y `libcurl`.
 
 ```bash
 # En Fedora / RHEL
@@ -59,29 +96,9 @@ El ejecutable generado estará en `build-win/NativeChats.exe`.
 
 ---
 
-## Guía de Uso
-
-1. Al abrir la aplicación, presiona **F1** para desplegar el panel de ajustes.
-2. Ingresa tu canal de Twitch y la URL de tu directo de YouTube.
-3. Ajusta los deslizadores de opacidad, velocidad y tamaño de texto a tu gusto.
-4. Presiona **Guardar y Aplicar** (los datos se guardan automáticamente en `config.json`).
-5. Para OBS Studio o Streamlabs, añade una **Fuente de Navegador (Browser Source)** apuntando a `http://localhost:8080`.
-
----
-
-## Controles
-
-| Control | Acción |
-| :--- | :--- |
-| **F1** | Abre / Oculta el panel de ajustes. |
-| **Arrastrar barra superior** | Mueve la ventana por la pantalla. |
-| **Arrastrar bordes / esquinas** | Redimensiona la ventana a cualquier tamaño suavemente. |
-| **Rueda del ratón hacia arriba** | Pausa el chat para leer mensajes pasados. |
-| **Botón "Ir al fondo"** | Reanuda el desplazamiento en vivo. |
-| **Botón ✕ (o Alt + F4)** | Cierra la aplicación limpiamente. |
-
----
-
 ## Licencia
 
 Este proyecto está bajo la Licencia **MIT**.
+```
+
+---

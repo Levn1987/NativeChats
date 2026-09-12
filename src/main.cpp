@@ -11,12 +11,16 @@
 #include <QRegularExpression>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QResizeEvent>
 #include <QPainter>
 #include <QTimer>
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
+
 #include <QtGui/qwindow.h>
 #include <QtGui/QWindow>
+#include <QtGui/QScreen>
+#include <QtGui/QGuiApplication>
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -155,7 +159,7 @@ const std::string OBS_OVERLAY_HTML = R"html(
   <script>
     const MAX_VISIBLE_MESSAGES = 5;
     const FADE_TIMEOUT_MS = 25000;
-    let pacingIntervalMs = 800;
+    const PACING_INTERVAL_MS = 140;
 
     const twQueue = [];
     const ytQueue = [];
@@ -163,7 +167,7 @@ const std::string OBS_OVERLAY_HTML = R"html(
 
     const list = document.getElementById('chat-list');
 
-    function scheduleNextMessage() {
+    setInterval(() => {
       let data = null;
       if (twQueue.length > 0 && ytQueue.length > 0) {
         if (lastPlatformServed === "TW") {
@@ -184,10 +188,7 @@ const std::string OBS_OVERLAY_HTML = R"html(
       if (data) {
         renderSingleMessage(data);
       }
-
-      setTimeout(scheduleNextMessage, pacingIntervalMs);
-    }
-    setTimeout(scheduleNextMessage, pacingIntervalMs);
+    }, PACING_INTERVAL_MS);
 
     function renderSingleMessage(data) {
       const item = document.createElement('div');
@@ -237,20 +238,6 @@ const std::string OBS_OVERLAY_HTML = R"html(
       setTimeout(fetchMessages, 120);
     }
     fetchMessages();
-
-    async function syncObsSettings() {
-      try {
-        const r = await fetch('/api/config');
-        if (r.ok) {
-          const cfg = await r.json();
-          if (cfg.pacingInterval) pacingIntervalMs = cfg.pacingInterval;
-          if (cfg.fontSize) document.documentElement.style.setProperty('--obs-font-size', cfg.fontSize + 'px');
-          if (cfg.lineSpacing) document.documentElement.style.setProperty('--obs-line-spacing', cfg.lineSpacing + 'px');
-        }
-      } catch(e) {}
-      setTimeout(syncObsSettings, 2000);
-    }
-    syncObsSettings();
   </script>
 </body>
 </html>
@@ -267,10 +254,6 @@ public:
     std::atomic<bool> running{true};
     std::atomic<uint64_t> configVersion{1};
     std::mutex configMutex;
-
-    std::atomic<int> pacingInterval{800};
-    std::atomic<int> fontSize{15};
-    std::atomic<int> lineSpacing{6};
 
     std::atomic<bool> twitchConnected{false};
     std::atomic<bool> youtubeConnected{false};
@@ -289,7 +272,6 @@ public:
         char tempPath[MAX_PATH];
         GetTempPathA(MAX_PATH, tempPath);
         std::string tPath = tempPath;
-        // Normalizar barras a '/'
         std::replace(tPath.begin(), tPath.end(), '\\', '/');
         if (!tPath.empty() && tPath.back() != '/') tPath += '/';
         cacheDir = tPath + "nativechats_emotes/";
@@ -298,7 +280,6 @@ public:
 #endif
         try { fs::create_directories(cacheDir); } catch (...) {}
 
-        // Emotes globales populares
         globalEmotes["catJAM"] = "https://cdn.betterttv.net/emote/5f1b0186cf6d2144653d2970/2x";
         globalEmotes["PepeLaugh"] = "https://cdn.betterttv.net/emote/5c548025009a2e73916b3a37/2x";
         globalEmotes["KEKW"] = "https://cdn.betterttv.net/emote/5e9c6c187e090362f8b0b9e8/2x";
@@ -378,7 +359,6 @@ private:
         return size * nmemb;
     }
 
-    // Petición HTTP optimizada en texto plano sin compresión GZIP
     std::string httpGet(const std::string& url) {
 #ifdef _WIN32
         std::string response = "";
@@ -407,7 +387,6 @@ private:
             DWORD opt = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
             WinHttpSetOption(hRequest, WINHTTP_OPTION_REDIRECT_POLICY, &opt, sizeof(opt));
 
-            // Encabezado para evitar que YouTube devuelva datos comprimidos incompatibles
             LPCWSTR headers = L"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nAccept-Encoding: identity\r\n";
             WinHttpAddRequestHeaders(hRequest, headers, -1L, WINHTTP_ADDREQ_FLAG_ADD);
 
@@ -810,18 +789,6 @@ private:
             res.set_content(arr.dump(), "application/json; charset=utf-8");
         });
 
-        svr.Get("/api/config", [this](const httplib::Request&, httplib::Response& res) {
-            json j;
-            {
-                std::lock_guard<std::mutex> lock(configMutex);
-                j["pacingInterval"] = pacingInterval.load();
-                j["fontSize"] = fontSize.load();
-                j["lineSpacing"] = lineSpacing.load();
-            }
-            res.set_content(j.dump(), "application/json; charset=utf-8");
-        });
-
-        std::cout << "\n[OBS] Servidor web para OBS disponible en: http://localhost:8080\n";
         svr.listen("0.0.0.0", 8080);
     }
 };
@@ -842,7 +809,7 @@ public:
 #endif
         setAttribute(Qt::WA_TranslucentBackground, true);
         setMouseTracking(true);
-        setMinimumSize(280, 180);
+        setMinimumSize(260, 160);
         resize(460, 420);
 
         auto *mainLayout = new QVBoxLayout(this);
@@ -914,7 +881,6 @@ public:
         auto *ytLabel = new QLabel("URL de YouTube Live:");
         ytLabel->setStyleSheet("color: #f1c40f; font-weight: bold; font-size: 11px; border: none;");
 
-        // Sliders
         auto *opLabel = new QLabel("Opacidad del fondo (0% = cristal):");
         opLabel->setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 11px; border: none;");
         auto *opSlider = new QSlider(Qt::Horizontal);
@@ -933,7 +899,6 @@ public:
         paceSlider->setValue(m_pacingInterval);
         connect(paceSlider, &QSlider::valueChanged, this, [this](int v) {
             m_pacingInterval = v;
-            m_backend->pacingInterval.store(v);
             m_paceLabel->setText(QString("Pausa entre mensajes: %1 s").arg(v / 1000.0, 0, 'f', 1));
             m_pacingTimer->setInterval(m_pacingInterval);
         });
@@ -945,7 +910,6 @@ public:
         spSlider->setValue(m_lineSpacing);
         connect(spSlider, &QSlider::valueChanged, this, [this](int v) {
             m_lineSpacing = v;
-            m_backend->lineSpacing.store(v);
             m_chatLayout->setSpacing(m_lineSpacing);
         });
 
@@ -956,7 +920,6 @@ public:
         fsSlider->setValue(m_fontSize);
         connect(fsSlider, &QSlider::valueChanged, this, [this](int v) {
             m_fontSize = v;
-            m_backend->fontSize.store(v);
         });
 
         auto *btnBox = new QHBoxLayout();
@@ -996,7 +959,7 @@ public:
         m_chatContainer = new QWidget();
         m_chatContainer->setStyleSheet("background: transparent;");
         m_chatLayout = new QVBoxLayout(m_chatContainer);
-        m_chatLayout->setContentsMargins(4, 4, 4, 4);
+        m_chatLayout->setContentsMargins(0, 0, 0, 0);
         m_chatLayout->setSpacing(m_lineSpacing);
         m_chatLayout->addStretch();
 
@@ -1033,8 +996,19 @@ protected:
         painter.fillRect(rect(), QColor::fromRgbF(0.04, 0.04, 0.04, m_bgAlpha));
     }
 
+    // AJUSTA EL ANCHO DEL CONTENEDOR AL REDIMENSIONAR PARA QUE EL TEXTO SALTE DE LÍNEA
+    void resizeEvent(QResizeEvent *event) override {
+        QWidget::resizeEvent(event);
+        if (m_scrollArea && m_chatContainer && m_scrollArea->viewport()) {
+            int w = m_scrollArea->viewport()->width();
+            if (w > 50) {
+                m_chatContainer->setFixedWidth(w);
+            }
+        }
+    }
+
     Qt::Edges getResizeEdges(const QPoint& p) {
-        const int B = 8;
+        const int B = 10;
         Qt::Edges edges = Qt::Edges();
         if (p.x() <= B) edges |= Qt::LeftEdge;
         if (p.x() >= width() - B) edges |= Qt::RightEdge;
@@ -1160,16 +1134,16 @@ private slots:
         }
 
         auto *label = new QLabel(m_chatContainer);
+        // OBLIGA A LA ETIQUETA A NO EXPANDIRSE EN ANCHO Y SALTAR DE LÍNEA
+        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         label->setWordWrap(true);
         label->setTextFormat(Qt::RichText);
 
         QString badgeColor = (item.platform == "TW") ? "#9146FF" : "#FF0000";
         QString userColor  = (item.platform == "TW") ? "#c4a7e7" : "#ff7b72";
 
-        // Normalizar la ruta local a formato URL estándar de Qt (file:///C:/... o file:///tmp/...)
         QString localHtmlText = item.text;
-        QString nativeCachePath = QString::fromStdString(m_backend->cacheDir);
-        localHtmlText.replace(QStringLiteral("src=\"/emotes/"), QString("src=\"file:///%1").arg(nativeCachePath));
+        localHtmlText.replace(QStringLiteral("src=\"/emotes/"), QString("src=\"file:///%1").arg(QString::fromStdString(m_backend->cacheDir)));
 
         QString html = QString(
             "<span style='background:%1; color:white; padding:1px 5px; border-radius:3px; font-weight:bold; font-size:0.75em;'>%2</span> "
@@ -1291,18 +1265,15 @@ private:
                 }
                 if (j.contains("pacingInterval")) {
                     m_pacingInterval = j["pacingInterval"].get<int>();
-                    m_backend->pacingInterval.store(m_pacingInterval);
                     m_paceLabel->setText(QString("Pausa entre mensajes: %1 s").arg(m_pacingInterval / 1000.0, 0, 'f', 1));
                     m_pacingTimer->setInterval(m_pacingInterval);
                 }
                 if (j.contains("lineSpacing")) {
                     m_lineSpacing = j["lineSpacing"].get<int>();
-                    m_backend->lineSpacing.store(m_lineSpacing);
                     m_chatLayout->setSpacing(m_lineSpacing);
                 }
                 if (j.contains("fontSize")) {
                     m_fontSize = j["fontSize"].get<int>();
-                    m_backend->fontSize.store(m_fontSize);
                 }
             } catch (...) {}
         }

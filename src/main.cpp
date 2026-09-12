@@ -67,7 +67,7 @@ struct ChatItem {
 };
 
 // =============================================================
-// PLANTILLA WEB TRANSPARENTE PARA OBS STUDIO (Browser Source)
+// PLANTILLA WEB TRANSPARENTE PARA OBS STUDIO
 // =============================================================
 const std::string OBS_OVERLAY_HTML = R"html(
 <!DOCTYPE html>
@@ -78,6 +78,11 @@ const std::string OBS_OVERLAY_HTML = R"html(
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     
+    :root {
+      --obs-font-size: 16px;
+      --obs-line-spacing: 6px;
+    }
+
     html, body {
       background: transparent !important;
       background-color: rgba(0, 0, 0, 0) !important;
@@ -89,7 +94,7 @@ const std::string OBS_OVERLAY_HTML = R"html(
       flex-direction: column;
       justify-content: flex-end;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      font-size: 16px;
+      font-size: var(--obs-font-size);
       line-height: 1.4;
       user-select: none;
     }
@@ -100,30 +105,22 @@ const std::string OBS_OVERLAY_HTML = R"html(
       display: flex;
       flex-direction: column;
       justify-content: flex-end;
-      gap: 6px;
+      gap: var(--obs-line-spacing);
       padding: 10px;
     }
 
     @keyframes slideInBounce {
-      0% { opacity: 0; transform: translateX(50px); }
-      70% { opacity: 1; transform: translateX(-4px); }
+      0% { opacity: 0; transform: translateX(40px); }
+      70% { opacity: 1; transform: translateX(-3px); }
       100% { opacity: 1; transform: translateX(0); }
     }
 
-    @keyframes fadeOut {
-      from { opacity: 1; }
-      to { opacity: 0; transform: translateY(-5px); }
-    }
-
     .msg-item {
-      animation: slideInBounce 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+      animation: slideInBounce 0.28s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
       word-break: break-word;
       width: 100%;
       background: transparent !important;
       text-shadow: 1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000, 0 0 3px #000;
-    }
-    .msg-fading {
-      animation: fadeOut 0.5s ease-out forwards;
     }
 
     .badge {
@@ -157,9 +154,8 @@ const std::string OBS_OVERLAY_HTML = R"html(
   <div id="chat-list"></div>
 
   <script>
-    const MAX_VISIBLE_MESSAGES = 5;
-    const FADE_TIMEOUT_MS = 25000;
-    const PACING_INTERVAL_MS = 140;
+    let maxVisibleMessages = 5;
+    let pacingIntervalMs = 800;
 
     const twQueue = [];
     const ytQueue = [];
@@ -167,7 +163,8 @@ const std::string OBS_OVERLAY_HTML = R"html(
 
     const list = document.getElementById('chat-list');
 
-    setInterval(() => {
+    // Procesador con entrelazado justo
+    function scheduleNextMessage() {
       let data = null;
       if (twQueue.length > 0 && ytQueue.length > 0) {
         if (lastPlatformServed === "TW") {
@@ -188,7 +185,10 @@ const std::string OBS_OVERLAY_HTML = R"html(
       if (data) {
         renderSingleMessage(data);
       }
-    }, PACING_INTERVAL_MS);
+
+      setTimeout(scheduleNextMessage, pacingIntervalMs);
+    }
+    setTimeout(scheduleNextMessage, pacingIntervalMs);
 
     function renderSingleMessage(data) {
       const item = document.createElement('div');
@@ -205,16 +205,11 @@ const std::string OBS_OVERLAY_HTML = R"html(
 
       list.appendChild(item);
 
-      while (list.children.length > MAX_VISIBLE_MESSAGES) {
+      // SOLO ELIMINA MENSAJES SI SUPERAN EL LÍMITE QUE TÚ ELEGISTE
+      // NUNCA SE BORRAN POR TIEMPO INVENTADO
+      while (list.children.length > maxVisibleMessages) {
         list.removeChild(list.firstChild);
       }
-
-      setTimeout(() => {
-        item.classList.add('msg-fading');
-        setTimeout(() => {
-          if (item.parentNode === list) list.removeChild(item);
-        }, 500);
-      }, FADE_TIMEOUT_MS);
     }
 
     let lastMsgId = 0;
@@ -227,10 +222,10 @@ const std::string OBS_OVERLAY_HTML = R"html(
             if (m.id > lastMsgId) lastMsgId = m.id;
             if (m.platform === 'TW') {
               twQueue.push(m);
-              if (twQueue.length > 30) twQueue.shift();
+              if (twQueue.length > 40) twQueue.shift();
             } else {
               ytQueue.push(m);
-              if (ytQueue.length > 30) ytQueue.shift();
+              if (ytQueue.length > 40) ytQueue.shift();
             }
           }
         }
@@ -238,6 +233,22 @@ const std::string OBS_OVERLAY_HTML = R"html(
       setTimeout(fetchMessages, 120);
     }
     fetchMessages();
+
+    // Sincronización en vivo de ajustes con el backend cada segundo
+    async function syncObsSettings() {
+      try {
+        const r = await fetch('/api/config');
+        if (r.ok) {
+          const cfg = await r.json();
+          if (cfg.maxObsMessages) maxVisibleMessages = cfg.maxObsMessages;
+          if (cfg.pacingInterval) pacingIntervalMs = cfg.pacingInterval;
+          if (cfg.fontSize) document.documentElement.style.setProperty('--obs-font-size', cfg.fontSize + 'px');
+          if (cfg.lineSpacing) document.documentElement.style.setProperty('--obs-line-spacing', cfg.lineSpacing + 'px');
+        }
+      } catch(e) {}
+      setTimeout(syncObsSettings, 1000);
+    }
+    syncObsSettings();
   </script>
 </body>
 </html>
@@ -254,6 +265,11 @@ public:
     std::atomic<bool> running{true};
     std::atomic<uint64_t> configVersion{1};
     std::mutex configMutex;
+
+    std::atomic<int> pacingInterval{800};
+    std::atomic<int> fontSize{15};
+    std::atomic<int> lineSpacing{6};
+    std::atomic<int> maxObsMessages{5}; // Límite configurable de mensajes en OBS
 
     std::atomic<bool> twitchConnected{false};
     std::atomic<bool> youtubeConnected{false};
@@ -789,6 +805,19 @@ private:
             res.set_content(arr.dump(), "application/json; charset=utf-8");
         });
 
+        svr.Get("/api/config", [this](const httplib::Request&, httplib::Response& res) {
+            json j;
+            {
+                std::lock_guard<std::mutex> lock(configMutex);
+                j["pacingInterval"] = pacingInterval.load();
+                j["fontSize"] = fontSize.load();
+                j["lineSpacing"] = lineSpacing.load();
+                j["maxObsMessages"] = maxObsMessages.load();
+            }
+            res.set_content(j.dump(), "application/json; charset=utf-8");
+        });
+
+        std::cout << "\n[OBS] Servidor web para OBS disponible en: http://localhost:8080\n";
         svr.listen("0.0.0.0", 8080);
     }
 };
@@ -809,7 +838,7 @@ public:
 #endif
         setAttribute(Qt::WA_TranslucentBackground, true);
         setMouseTracking(true);
-        setMinimumSize(260, 160);
+        setMinimumSize(280, 180);
         resize(460, 420);
 
         auto *mainLayout = new QVBoxLayout(this);
@@ -881,6 +910,7 @@ public:
         auto *ytLabel = new QLabel("URL de YouTube Live:");
         ytLabel->setStyleSheet("color: #f1c40f; font-weight: bold; font-size: 11px; border: none;");
 
+        // Slider Opacidad
         auto *opLabel = new QLabel("Opacidad del fondo (0% = cristal):");
         opLabel->setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 11px; border: none;");
         auto *opSlider = new QSlider(Qt::Horizontal);
@@ -891,6 +921,7 @@ public:
             update();
         });
 
+        // Slider Velocidad
         m_paceLabel = new QLabel(QString("Pausa entre mensajes: %1 s").arg(m_pacingInterval / 1000.0, 0, 'f', 1));
         m_paceLabel->setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 11px; border: none;");
         auto *paceSlider = new QSlider(Qt::Horizontal);
@@ -899,10 +930,12 @@ public:
         paceSlider->setValue(m_pacingInterval);
         connect(paceSlider, &QSlider::valueChanged, this, [this](int v) {
             m_pacingInterval = v;
+            m_backend->pacingInterval.store(v);
             m_paceLabel->setText(QString("Pausa entre mensajes: %1 s").arg(v / 1000.0, 0, 'f', 1));
             m_pacingTimer->setInterval(m_pacingInterval);
         });
 
+        // Slider Separación
         auto *spLabel = new QLabel("Separación entre mensajes:");
         spLabel->setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 11px; border: none;");
         auto *spSlider = new QSlider(Qt::Horizontal);
@@ -910,9 +943,11 @@ public:
         spSlider->setValue(m_lineSpacing);
         connect(spSlider, &QSlider::valueChanged, this, [this](int v) {
             m_lineSpacing = v;
+            m_backend->lineSpacing.store(v);
             m_chatLayout->setSpacing(m_lineSpacing);
         });
 
+        // Slider Tamaño de letra
         auto *fsLabel = new QLabel("Tamaño de letra:");
         fsLabel->setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 11px; border: none;");
         auto *fsSlider = new QSlider(Qt::Horizontal);
@@ -920,6 +955,19 @@ public:
         fsSlider->setValue(m_fontSize);
         connect(fsSlider, &QSlider::valueChanged, this, [this](int v) {
             m_fontSize = v;
+            m_backend->fontSize.store(v);
+        });
+
+        // Slider Mensajes Visibles en OBS
+        m_obsMsgLabel = new QLabel(QString("Mensajes visibles en OBS: %1").arg(m_maxObsMessages));
+        m_obsMsgLabel->setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 11px; border: none;");
+        auto *obsMsgSlider = new QSlider(Qt::Horizontal);
+        obsMsgSlider->setRange(3, 15);
+        obsMsgSlider->setValue(m_maxObsMessages);
+        connect(obsMsgSlider, &QSlider::valueChanged, this, [this](int v) {
+            m_maxObsMessages = v;
+            m_backend->maxObsMessages.store(v);
+            m_obsMsgLabel->setText(QString("Mensajes visibles en OBS: %1").arg(v));
         });
 
         auto *btnBox = new QHBoxLayout();
@@ -946,6 +994,8 @@ public:
         cfgLayout->addWidget(spSlider);
         cfgLayout->addWidget(fsLabel);
         cfgLayout->addWidget(fsSlider);
+        cfgLayout->addWidget(m_obsMsgLabel);
+        cfgLayout->addWidget(obsMsgSlider);
         cfgLayout->addLayout(btnBox);
         mainLayout->addWidget(m_configWidget);
 
@@ -996,7 +1046,7 @@ protected:
         painter.fillRect(rect(), QColor::fromRgbF(0.04, 0.04, 0.04, m_bgAlpha));
     }
 
-    // AJUSTA EL ANCHO DEL CONTENEDOR AL REDIMENSIONAR PARA QUE EL TEXTO SALTE DE LÍNEA
+    // AJUSTA EL ANCHO DEL CONTENEDOR EN RESIZE PARA QUE NUNCA SE CORTE EL TEXTO
     void resizeEvent(QResizeEvent *event) override {
         QWidget::resizeEvent(event);
         if (m_scrollArea && m_chatContainer && m_scrollArea->viewport()) {
@@ -1134,7 +1184,7 @@ private slots:
         }
 
         auto *label = new QLabel(m_chatContainer);
-        // OBLIGA A LA ETIQUETA A NO EXPANDIRSE EN ANCHO Y SALTAR DE LÍNEA
+        // OBLIGA A LA ETIQUETA A AJUSTARSE Y SALTAR DE LÍNEA
         label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         label->setWordWrap(true);
         label->setTextFormat(Qt::RichText);
@@ -1187,6 +1237,7 @@ private slots:
         j["pacingInterval"] = m_pacingInterval;
         j["lineSpacing"] = m_lineSpacing;
         j["fontSize"] = m_fontSize;
+        j["maxObsMessages"] = m_maxObsMessages;
         std::ofstream f("config.json");
         if (f.is_open()) f << j.dump(4);
 
@@ -1206,6 +1257,7 @@ private:
     QLabel* m_twDot;
     QLabel* m_ytDot;
     QLabel* m_paceLabel;
+    QLabel* m_obsMsgLabel;
     QPushButton* m_scrollDownBtn;
     QLineEdit* m_twInput;
     QLineEdit* m_ytInput;
@@ -1218,6 +1270,7 @@ private:
     int m_lineSpacing = 6;
     int m_fontSize = 15;
     int m_pacingInterval = 800;
+    int m_maxObsMessages = 5;
     bool m_isPaused = false;
 
     QString formatLinks(const QString& text) {
@@ -1265,15 +1318,23 @@ private:
                 }
                 if (j.contains("pacingInterval")) {
                     m_pacingInterval = j["pacingInterval"].get<int>();
+                    m_backend->pacingInterval.store(m_pacingInterval);
                     m_paceLabel->setText(QString("Pausa entre mensajes: %1 s").arg(m_pacingInterval / 1000.0, 0, 'f', 1));
                     m_pacingTimer->setInterval(m_pacingInterval);
                 }
                 if (j.contains("lineSpacing")) {
                     m_lineSpacing = j["lineSpacing"].get<int>();
+                    m_backend->lineSpacing.store(m_lineSpacing);
                     m_chatLayout->setSpacing(m_lineSpacing);
                 }
                 if (j.contains("fontSize")) {
                     m_fontSize = j["fontSize"].get<int>();
+                    m_backend->fontSize.store(m_fontSize);
+                }
+                if (j.contains("maxObsMessages")) {
+                    m_maxObsMessages = j["maxObsMessages"].get<int>();
+                    m_backend->maxObsMessages.store(m_maxObsMessages);
+                    if (m_obsMsgLabel) m_obsMsgLabel->setText(QString("Mensajes visibles en OBS: %1").arg(m_maxObsMessages));
                 }
             } catch (...) {}
         }

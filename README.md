@@ -84,3 +84,70 @@ cd NativeChats
 cmake -B build
 cmake --build build -j$(nproc)
 ./build/NativeChats
+```
+
+### En Ubuntu / Debian
+
+```bash
+sudo apt install -y g++ cmake git libcurl4-openssl-dev qt6-base-dev
+```
+
+### Compilación cruzada para Windows 11 desde Fedora
+
+**Requisitos** (todos, incluidos los imageformats que son críticos para los emotes webp de 7TV):
+
+```bash
+sudo dnf install -y \
+  mingw64-gcc-c++ \
+  mingw64-cmake \
+  mingw64-qt6-qtbase \
+  mingw64-qt6-qtimageformats \
+  mingw64-qt6-qtsvg
+```
+
+**Compilar:**
+
+```bash
+cd NativeChats
+mingw64-cmake -B build-win
+cmake --build build-win -j$(nproc)
+```
+
+El ejecutable queda en `build-win/NativeChats.exe`.
+
+**Importante**: el `.exe` **no corre solo**. Necesita los DLLs de Qt y MinGW, más las subcarpetas `platforms/`, `imageformats/` y `styles/`. Para armar el paquete completo:
+
+```bash
+mkdir -p dist-windows/platforms dist-windows/imageformats dist-windows/styles
+cp build-win/NativeChats.exe dist-windows/
+
+MINGW_ROOT=/usr/x86_64-w64-mingw32/sys-root/mingw
+
+# DLLs transitivas (5 pasadas para resolver dependencias encadenadas)
+for i in 1 2 3 4 5; do
+  for f in dist-windows/*.dll dist-windows/*.exe; do
+    [ -f "$f" ] || continue
+    deps=$(x86_64-w64-mingw32-objdump -p "$f" 2>/dev/null | grep -i 'DLL Name' | awk '{print $3}')
+    for dep in $deps; do
+      real_dep=$(find "$MINGW_ROOT/bin" -maxdepth 1 -iname "$dep" -exec basename {} \; 2>/dev/null | head -1)
+      if [ -n "$real_dep" ] && [ ! -f "dist-windows/$real_dep" ]; then
+        cp "$MINGW_ROOT/bin/$real_dep" dist-windows/
+      fi
+    done
+  done
+done
+
+# Plugins de Qt (cargados en runtime, no aparecen en objdump)
+find "$MINGW_ROOT" -name "qwindows.dll" -path "*platforms*" -exec cp {} dist-windows/platforms/ \;
+for p in qjpeg qgif qwebp qsvg qtiff qicns; do
+  find "$MINGW_ROOT" -name "${p}.dll" -path "*imageformats*" -exec cp {} dist-windows/imageformats/ \; 2>/dev/null
+done
+find "$MINGW_ROOT" -name "qmodernwindowsstyle.dll" -path "*styles*" -exec cp {} dist-windows/styles/ \; 2>/dev/null
+
+zip -r NativeChats-Windows.zip dist-windows
+```
+
+## Licencia
+
+Este proyecto está bajo la Licencia MIT. Ver [LICENSE](LICENSE).
+```

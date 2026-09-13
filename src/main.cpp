@@ -59,7 +59,6 @@
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// Tamano maximo de las colas (JS y app). Si sube mucho mas, algo esta mal.
 static constexpr size_t MAX_QUEUE_SIZE     = 1000;
 static constexpr size_t MAX_MESSAGE_LOG    = 1000;
 static constexpr size_t MAX_SEEN_YT_IDS    = 2000;
@@ -73,7 +72,7 @@ struct ChatItem {
 };
 
 // =============================================================
-// UTILIDAD: extraer videoId de cualquier formato de URL de YouTube
+// UTILIDADES YOUTUBE
 // =============================================================
 static bool isValidVideoId(const std::string& s) {
     if (s.size() != 11) return false;
@@ -114,6 +113,36 @@ static std::string extractVideoId(const std::string& url) {
     return "";
 }
 
+// Fallback: extraer videoId del HTML de la pagina final (sigue redirects de /@canal/live)
+static std::string extractVideoIdFromHtml(const std::string& html) {
+    // Metodo 1: og:url (canonico, apunta al video real)
+    size_t ogPos = html.find("<meta property=\"og:url\" content=\"");
+    if (ogPos != std::string::npos) {
+        size_t start = ogPos + 34;
+        size_t end = html.find('"', start);
+        if (end != std::string::npos) {
+            std::string ogUrl = html.substr(start, end - start);
+            size_t vp = ogUrl.find("v=");
+            if (vp != std::string::npos && vp + 2 + 11 <= ogUrl.size()) {
+                std::string id = ogUrl.substr(vp + 2, 11);
+                if (isValidVideoId(id)) return id;
+            }
+            size_t lp = ogUrl.find("/live/");
+            if (lp != std::string::npos && lp + 6 + 11 <= ogUrl.size()) {
+                std::string id = ogUrl.substr(lp + 6, 11);
+                if (isValidVideoId(id)) return id;
+            }
+        }
+    }
+    // Metodo 2: "videoId":"..." (menos confiable)
+    size_t pos = html.find("\"videoId\":\"");
+    if (pos != std::string::npos && pos + 11 + 11 <= html.size()) {
+        std::string cand = html.substr(pos + 11, 11);
+        if (isValidVideoId(cand)) return cand;
+    }
+    return "";
+}
+
 // =============================================================
 // PLANTILLA WEB TRANSPARENTE PARA OBS STUDIO
 // =============================================================
@@ -125,60 +154,44 @@ const std::string OBS_OVERLAY_HTML = R"html(
   <title>NativeChats OBS Overlay</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --obs-font-size: 20px;
-      --obs-line-spacing: 13px;
-    }
-
+    :root { --obs-font-size: 20px; --obs-line-spacing: 13px; }
     html, body {
       background: transparent !important;
-      background-color: rgba(0, 0, 0, 0) !important;
       color: #fff;
-      height: 100vh;
-      width: 100vw;
+      height: 100vh; width: 100vw;
       overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
+      display: flex; flex-direction: column; justify-content: flex-end;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       font-size: var(--obs-font-size);
       line-height: 1.4;
       user-select: none;
     }
-
     #chat-list {
       width: 100%;
-      background: transparent !important;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
+      display: flex; flex-direction: column; justify-content: flex-end;
       gap: var(--obs-line-spacing);
       padding: 10px;
     }
-
     @keyframes slideInBounce {
       0% { opacity: 0; transform: translateX(40px); }
       70% { opacity: 1; transform: translateX(-3px); }
       100% { opacity: 1; transform: translateX(0); }
     }
-
     .msg-item {
       animation: slideInBounce 0.28s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
       word-break: break-word;
       width: 100%;
-      background: transparent !important;
       text-shadow: 1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000, 0 0 3px #000;
     }
-
     .badge {
       font-weight: bold;
-      font-size: 11px;
-      padding: 1px 4px;
+      font-size: 0.7em;
+      padding: 2px 6px;
       border-radius: 3px;
-      margin-right: 4px;
+      margin-right: 6px;
       display: inline-block;
       vertical-align: middle;
+      line-height: 1;
       text-shadow: none;
     }
     .badge-tw { background: #9146FF; color: #fff; }
@@ -191,38 +204,22 @@ const std::string OBS_OVERLAY_HTML = R"html(
 </head>
 <body>
   <div id="chat-list"></div>
-
   <script>
     let maxVisibleMessages = 6;
     let pacingIntervalMs = 1500;
-
     const twQueue = [];
     const ytQueue = [];
     let lastPlatformServed = "YT";
-
-    // Cap grande: no perder mensajes en raids. El backend ya limita su log,
-    // no hace falta tirar aca tan agresivamente.
     const MAX_QUEUE = 1000;
-
     const list = document.getElementById('chat-list');
 
     function scheduleNextMessage() {
       let data = null;
       if (twQueue.length > 0 && ytQueue.length > 0) {
-        if (lastPlatformServed === "TW") {
-          data = ytQueue.shift();
-          lastPlatformServed = "YT";
-        } else {
-          data = twQueue.shift();
-          lastPlatformServed = "TW";
-        }
-      } else if (twQueue.length > 0) {
-        data = twQueue.shift();
-        lastPlatformServed = "TW";
-      } else if (ytQueue.length > 0) {
-        data = ytQueue.shift();
-        lastPlatformServed = "YT";
-      }
+        if (lastPlatformServed === "TW") { data = ytQueue.shift(); lastPlatformServed = "YT"; }
+        else { data = twQueue.shift(); lastPlatformServed = "TW"; }
+      } else if (twQueue.length > 0) { data = twQueue.shift(); lastPlatformServed = "TW"; }
+      else if (ytQueue.length > 0) { data = ytQueue.shift(); lastPlatformServed = "YT"; }
       if (data) renderSingleMessage(data);
       setTimeout(scheduleNextMessage, pacingIntervalMs);
     }
@@ -232,16 +229,13 @@ const std::string OBS_OVERLAY_HTML = R"html(
       const item = document.createElement('div');
       item.className = 'msg-item';
       const badgeClass = data.platform === 'TW' ? 'badge-tw' : 'badge-yt';
-      const badgeText = data.platform === 'TW' ? 'TW' : 'YT';
       item.innerHTML = `
-        <span class="badge ${badgeClass}">${badgeText}</span>
+        <span class="badge ${badgeClass}">${data.platform}</span>
         <span class="user">${data.user}:</span>
         <span class="text">${data.text}</span>
       `;
       list.appendChild(item);
-      while (list.children.length > maxVisibleMessages) {
-        list.removeChild(list.firstChild);
-      }
+      while (list.children.length > maxVisibleMessages) list.removeChild(list.firstChild);
     }
 
     let lastMsgId = -1;
@@ -250,14 +244,9 @@ const std::string OBS_OVERLAY_HTML = R"html(
     async function bootstrap() {
       try {
         const r = await fetch('/api/last-id');
-        if (r.ok) {
-          const j = await r.json();
-          lastMsgId = j.id || 0;
-          bootstrapped = true;
-        }
+        if (r.ok) { const j = await r.json(); lastMsgId = j.id || 0; bootstrapped = true; }
       } catch (e) {}
-      if (!bootstrapped) setTimeout(bootstrap, 500);
-      else fetchMessages();
+      if (!bootstrapped) setTimeout(bootstrap, 500); else fetchMessages();
     }
     bootstrap();
 
@@ -268,13 +257,8 @@ const std::string OBS_OVERLAY_HTML = R"html(
           const msgs = await res.json();
           for (const m of msgs) {
             if (m.id > lastMsgId) lastMsgId = m.id;
-            if (m.platform === 'TW') {
-              twQueue.push(m);
-              if (twQueue.length > MAX_QUEUE) twQueue.shift();
-            } else {
-              ytQueue.push(m);
-              if (ytQueue.length > MAX_QUEUE) ytQueue.shift();
-            }
+            if (m.platform === 'TW') { twQueue.push(m); if (twQueue.length > MAX_QUEUE) twQueue.shift(); }
+            else { ytQueue.push(m); if (ytQueue.length > MAX_QUEUE) ytQueue.shift(); }
           }
         }
       } catch (e) {}
@@ -301,7 +285,7 @@ const std::string OBS_OVERLAY_HTML = R"html(
 )html";
 
 // ==========================================
-// BACKEND MULTIHILO (C++ CORE)
+// BACKEND MULTIHILO
 // ==========================================
 class ChatBackend : public QObject {
     Q_OBJECT
@@ -312,7 +296,6 @@ public:
     std::atomic<uint64_t> configVersion{1};
     std::mutex configMutex;
 
-    // Defaults al medio
     std::atomic<int> pacingInterval{1500};
     std::atomic<int> fontSize{20};
     std::atomic<int> lineSpacing{13};
@@ -388,7 +371,8 @@ public:
             if (messageLog.size() > MAX_MESSAGE_LOG) messageLog.pop_front();
         }
 
-        emit messageReceived(item.id, QString::fromStdString(platform), QString::fromStdString(user), QString::fromStdString(text), QString::fromStdString(msgId));
+        emit messageReceived(item.id, QString::fromStdString(platform), QString::fromStdString(user),
+                             QString::fromStdString(text), QString::fromStdString(msgId));
     }
 
     std::string getCachedEmoteFilename(const std::string& imgUrl) {
@@ -438,10 +422,8 @@ private:
         HINTERNET hSession = WinHttpOpen(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
                                          WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
         if (!hSession) return "";
-
         HINTERNET hConnect = WinHttpConnect(hSession, urlComp.lpszHostName, urlComp.nPort, 0);
         if (!hConnect) { WinHttpCloseHandle(hSession); return ""; }
-
         DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
         HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", urlComp.lpszUrlPath, NULL, NULL, NULL, flags);
         if (hRequest) {
@@ -560,7 +542,6 @@ private:
             emoPos += 7;
             size_t endEmo = tags.find(';', emoPos);
             std::string emoData = tags.substr(emoPos, (endEmo == std::string::npos ? tags.size() : endEmo) - emoPos);
-
             if (!emoData.empty()) {
                 std::istringstream stream(emoData);
                 std::string token;
@@ -605,10 +586,7 @@ private:
         std::string word;
         std::string finalMsg = "";
         while (iss >> word) {
-            if (word.rfind("<img", 0) == 0) {
-                finalMsg += word + " ";
-                continue;
-            }
+            if (word.rfind("<img", 0) == 0) { finalMsg += word + " "; continue; }
             auto it = globalEmotes.find(word);
             if (it != globalEmotes.end()) {
                 std::string emoteFile = getCachedEmoteFilename(it->second);
@@ -622,7 +600,6 @@ private:
             }
         }
         if (!finalMsg.empty() && finalMsg.back() == ' ') finalMsg.pop_back();
-
         return finalMsg.empty() ? msg : finalMsg;
     }
 
@@ -815,9 +792,7 @@ private:
                         }
                     }
                 }
-                if (!text.empty()) {
-                    pushMessage("YT", author, text, id);
-                }
+                if (!text.empty()) pushMessage("YT", author, text, id);
             }
         };
 
@@ -844,11 +819,7 @@ private:
                 if (videoId.empty()) {
                     std::string html = httpGet(currentUrl);
                     if (!html.empty()) {
-                        size_t pos = html.find("\"videoId\":\"");
-                        if (pos != std::string::npos && pos + 11 + 11 <= html.size()) {
-                            std::string cand = html.substr(pos + 11, 11);
-                            if (isValidVideoId(cand)) videoId = cand;
-                        }
+                        videoId = extractVideoIdFromHtml(html);
                     }
                 }
 
@@ -869,6 +840,7 @@ private:
                     continue;
                 }
 
+                // === API KEY (publica, embebida en cada pagina de YouTube) ===
                 size_t kp = chatHtml.find("\"INNERTUBE_API_KEY\":\"");
                 if (kp != std::string::npos) {
                     kp += 21;
@@ -876,16 +848,7 @@ private:
                     if (ke != std::string::npos) apiKey = chatHtml.substr(kp, ke - kp);
                 }
 
-                size_t lcr = chatHtml.find("\"liveChatRenderer\"");
-                if (lcr != std::string::npos) {
-                    size_t cp = chatHtml.find("\"continuation\":\"", lcr);
-                    if (cp != std::string::npos) {
-                        cp += 16;
-                        size_t ce = chatHtml.find('"', cp);
-                        if (ce != std::string::npos) continuation = chatHtml.substr(cp, ce - cp);
-                    }
-                }
-
+                // === CONTINUATION: metodo 1, parsear ytInitialData ===
                 size_t jsonStart = chatHtml.find("ytInitialData");
                 if (jsonStart != std::string::npos) {
                     size_t braceStart = chatHtml.find('{', jsonStart);
@@ -895,15 +858,45 @@ private:
                         if (braceEnd != std::string::npos && braceEnd > braceStart) {
                             try {
                                 auto data = json::parse(chatHtml.substr(braceStart, braceEnd - braceStart + 1));
-                                if (data.contains("contents") && data["contents"].contains("liveChatRenderer")
-                                    && data["contents"]["liveChatRenderer"].contains("actions")) {
-                                    auto& actions = data["contents"]["liveChatRenderer"]["actions"];
-                                    processActions(actions);
+                                if (data.contains("contents") && data["contents"].contains("liveChatRenderer")) {
+                                    auto& lcr = data["contents"]["liveChatRenderer"];
+                                    if (lcr.contains("continuations") && !lcr["continuations"].empty()) {
+                                        auto& c = lcr["continuations"][0];
+                                        if (c.contains("reloadContinuationData") && c["reloadContinuationData"].contains("continuation")) {
+                                            continuation = c["reloadContinuationData"]["continuation"].get<std::string>();
+                                        } else if (c.contains("invalidationContinuationData") && c["invalidationContinuationData"].contains("continuation")) {
+                                            continuation = c["invalidationContinuationData"]["continuation"].get<std::string>();
+                                        } else if (c.contains("timedContinuationData") && c["timedContinuationData"].contains("continuation")) {
+                                            continuation = c["timedContinuationData"]["continuation"].get<std::string>();
+                                        }
+                                    }
+                                    if (lcr.contains("actions")) {
+                                        processActions(lcr["actions"]);
+                                    }
                                 }
                             } catch (const std::exception& e) {
                                 std::cerr << "[YT] Error parseando ytInitialData: " << e.what() << std::endl;
                             }
                         }
+                    }
+                }
+
+                // === CONTINUATION: metodo 2, scan de HTML por patron 0of... ===
+                if (continuation.empty()) {
+                    size_t scanPos = 0;
+                    int intentos = 0;
+                    while ((scanPos = chatHtml.find("\"continuation\":\"", scanPos)) != std::string::npos && intentos < 50) {
+                        scanPos += 16;
+                        size_t ce = chatHtml.find('"', scanPos);
+                        if (ce == std::string::npos) break;
+                        std::string cand = chatHtml.substr(scanPos, ce - scanPos);
+                        if (cand.size() > 30 && cand.rfind("0of", 0) == 0) {
+                            continuation = cand;
+                            std::cerr << "[YT] Continuation hallado por fallback HTML" << std::endl;
+                            break;
+                        }
+                        scanPos = ce + 1;
+                        intentos++;
                     }
                 }
 
@@ -991,18 +984,12 @@ private:
             if (req.has_param("since")) {
                 try { sinceId = std::stoull(req.get_param_value("since")); } catch (...) {}
             }
-
             json arr = json::array();
             {
                 std::lock_guard<std::mutex> lock(messageMutex);
                 for (const auto& m : messageLog) {
                     if (m.id > sinceId) {
-                        arr.push_back({
-                            {"id", m.id},
-                            {"platform", m.platform},
-                            {"user", m.user},
-                            {"text", m.text}
-                        });
+                        arr.push_back({{"id", m.id}, {"platform", m.platform}, {"user", m.user}, {"text", m.text}});
                     }
                 }
             }
@@ -1038,7 +1025,7 @@ private:
 };
 
 // =============================================================
-// VENTANA FLOTANTE TRANSPARENTE EN QT6
+// VENTANA FLOTANTE
 // =============================================================
 class OverlayWindow : public QWidget {
     Q_OBJECT
@@ -1079,7 +1066,6 @@ public:
 
         m_twDot = new QLabel("● TW");
         m_twDot->setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold;");
-
         m_ytDot = new QLabel("● YT");
         m_ytDot->setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold;");
 
@@ -1117,7 +1103,7 @@ public:
         twLabel->setStyleSheet("color: #f1c40f; font-weight: bold; font-size: 11px; border: none;");
 
         m_ytInput = new QLineEdit(QString::fromStdString(m_backend->youtubeUrl));
-        m_ytInput->setPlaceholderText("https://www.youtube.com/@canal/live  |  https://youtu.be/ID  |  https://youtube.com/shorts/ID");
+        m_ytInput->setPlaceholderText("https://www.youtube.com/watch?v=ID  o  https://youtu.be/ID  (tambien /@canal/live si esta en directo)");
         m_ytInput->setStyleSheet("background: #2b2b2b; color: white; padding: 4px; border: 1px solid #444; border-radius: 3px; font-size: 12px;");
         auto *ytLabel = new QLabel("URL de YouTube Live:");
         ytLabel->setStyleSheet("color: #f1c40f; font-weight: bold; font-size: 11px; border: none;");
@@ -1132,7 +1118,6 @@ public:
             update();
         });
 
-        // SLIDER DE PAUSA: izquierda = rapido (0s), derecha = lento (3s)
         m_paceLabel = new QLabel(QString("Pausa entre mensajes: %1 s").arg(m_pacingInterval / 1000.0, 0, 'f', 1));
         m_paceLabel->setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 11px; border: none;");
         auto *paceSlider = new QSlider(Qt::Horizontal);
@@ -1140,7 +1125,7 @@ public:
         paceSlider->setSingleStep(100);
         paceSlider->setPageStep(500);
         paceSlider->setTickPosition(QSlider::TicksBelow);
-        paceSlider->setTickInterval(500); // marcas cada 0.5 s
+        paceSlider->setTickInterval(500);
         paceSlider->setValue(m_pacingInterval);
         connect(paceSlider, &QSlider::valueChanged, this, [this](int v) {
             m_pacingInterval = std::max(50, v);
@@ -1395,11 +1380,25 @@ private slots:
         QString localHtmlText = item.text;
         localHtmlText.replace(QStringLiteral("src=\"/emotes/"), QString("src=\"file:///%1").arg(QString::fromStdString(m_backend->cacheDir)));
 
+        // Calculo: badge 70% del tamano del mensaje, minimo 10px. Usuario al 100% igual que el texto.
+        int badgePx = std::max(10, m_fontSize * 7 / 10);
+
         QString html = QString(
-            "<span style='background:%1; color:white; padding:1px 5px; border-radius:3px; font-weight:bold; font-size:0.75em;'>%2</span> "
-            "<b style='color:%3; margin-right:4px;'>%4:</b> "
-            "<span style='color:#ffffff; font-size:%5px;'>%6</span>"
-        ).arg(badgeColor, item.platform, userColor, item.user.toHtmlEscaped(), QString::number(m_fontSize), formatLinks(localHtmlText));
+            "<div style='font-size:%1px; line-height:1.35;'>"
+            "<span style='background:%2; color:#ffffff; font-weight:bold; font-size:%3px; "
+            "padding:2px 6px; border-radius:3px; line-height:1;'>%4</span>"
+            "&nbsp;<span style='color:%5; font-weight:bold;'>%6:</span>&nbsp;"
+            "<span style='color:#ffffff;'>%7</span>"
+            "</div>"
+        ).arg(
+            QString::number(m_fontSize),        // %1 - base
+            badgeColor,                          // %2
+            QString::number(badgePx),            // %3 - badge px
+            item.platform,                       // %4 - texto TW/YT
+            userColor,                           // %5
+            item.user.toHtmlEscaped(),           // %6
+            formatLinks(localHtmlText)           // %7
+        );
 
         label->setText(html);
         label->setStyleSheet("background: transparent;");
@@ -1466,7 +1465,6 @@ private:
     QVBoxLayout* m_chatLayout;
     QTimer* m_pacingTimer;
 
-    // Defaults al medio
     double m_bgAlpha = 0.5;
     int m_lineSpacing = 13;
     int m_fontSize = 20;
@@ -1477,7 +1475,6 @@ private:
     QString formatLinks(const QString& text) {
         QString result = "";
         static QRegularExpression tagOrUrlRegex(QStringLiteral("(<img[^>]+>)|(https?://[^\\s<]+)"));
-
         int lastPos = 0;
         auto matchIt = tagOrUrlRegex.globalMatch(text);
         while (matchIt.hasNext()) {
@@ -1513,10 +1510,7 @@ private:
                     m_backend->youtubeUrl = j["youtube"].get<std::string>();
                     m_ytInput->setText(QString::fromStdString(m_backend->youtubeUrl));
                 }
-                if (j.contains("opacity")) {
-                    m_bgAlpha = j["opacity"].get<double>();
-                    update();
-                }
+                if (j.contains("opacity")) { m_bgAlpha = j["opacity"].get<double>(); update(); }
                 if (j.contains("pacingInterval")) {
                     m_pacingInterval = j["pacingInterval"].get<int>();
                     m_backend->pacingInterval.store(m_pacingInterval);

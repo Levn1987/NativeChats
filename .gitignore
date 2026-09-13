@@ -20,3 +20,6 @@ moc_*.cpp
 .DS_Store
 *.swp
 *~
+build-linux/
+NativeChats-Windows/
+hash.txt
